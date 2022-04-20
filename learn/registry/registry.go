@@ -1,16 +1,63 @@
-package http
+package registry
+
+import (
+	uuid "github.com/google/uuid"
+)
+
+type Registry struct {
+	db *DB
+}
+
+func (r *Registry) Init(username string, password string, dbname string, dbhost string, dbport int) {
+	db := NewDB(username, password, dbname, dbhost, dbport)
+	r.db = db
+}
+
+func (r *Registry) GetUserById(user_id string) *User {
+	user, _ := r.db.GetUserById(user_id)
+	return user
+}
+
+func (rapi *Registry) ConfigureRegistry(request *ConfigureRegistryRequest) *ConfigureRegistryResponse {
+	return nil
+}
+
+func (rapi *Registry) CreateServer(request *CreateServerRequest) *CreateServerResponse {
+	return nil
+}
+
+func (rapi *Registry) CreateUser(request *CreateUserRequest) *CreateUserResponse {
+	return nil
+}
+
+func (rapi *Registry) AuthenticateUser(req *AuthTokenRequest) *AuthTokenResponse {
+	token := uuid.New().String()
+	req.user.Temp_token = token
+	resp := &AuthTokenResponse{}
+	resp.Success = true
+	resp.AuthToken = token
+	resp.Response_code = 200
+	resp.Message = "ok"
+	return resp
+}
+
+func (rapi *Registry) AuthenticateServer(req *AuthTokenRequest) *AuthTokenResponse {
+	return nil
+}
+
+func (rapi *Registry) ListServers(request *ListServersRequest) *ListServersResponse {
+	return nil
+}
+
+func (rapi *Registry) RegisterServer(request *RegisterServerRequest) *RegisterServerResponse {
+	return nil
+}
+
+func (rapi *Registry) UnregisterServer(request *UnregisterServerRequest) *UnregisterServerResponse {
+	return nil
+}
 
 /*
-all HTTPS
-
-IDENTITY can be
-	id			    UUID
-	username	    STRING
-	identity_type	USER|SERVER
-	created			DATETIME
-	status			ENABLED|DISABLED|BANNED|DELETED|PENDING
-	last_modified   DATETIME
-
 USER has ROLE(s)
 	REGISTRY_ADMIN	can modify anything
 	SERVER_ADMIN	can create and modify their servers
@@ -70,19 +117,3 @@ CREATE_SERVER (name, description, ip/port) responds with SECRET_SERVER_ID
 
 
 */
-
-import (
-	goutils "github.com/simonski/goutils"
-)
-
-func NewApp() *App {
-	return &App{}
-}
-
-type App struct {
-}
-
-func (a *App) HandleInput(command string, cli *goutils.CLI) {
-	server := NewHttpServer(cli)
-	server.Run()
-}

@@ -1,24 +1,115 @@
-package sqlite
+package registry
 
 import (
 	"fmt"
-
-	"database/sql"
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/simonski/golearn/learn/utils"
-	goutils "github.com/simonski/goutils"
+
+	sqlx "github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 )
 
-type Config struct {
+var SQL_SCHEMA = `    
+
+DROP TABLE IF EXISTS config;
+CREATE TABLE IF NOT EXISTS config (
+	key VARCHAR NOT NULL, 
+	value VARCHAR NOT NULL, 
+	PRIMARY KEY (key)
+);
+
+DROP TABLE IF EXISTS users;
+CREATE TABLE IF NOT EXISTS users (
+	id VARCHAR NOT NULL,
+	user_name VARCHAR NOT NULL UNIQUE,
+	role VARCHAR NOT NULL,
+	status VARCHAR NOT NULL,
+	created TIMESTAMP NOT NULL,
+	last_modified TIMESTAMP NOT NULL,
+	password VARCHAR NOT NULL,
+	temp_token VARCHAR,
+	temp_token_expires TIMESTAMP,
+	last_login TIMESTAMP,
+	email VARCHAR NOT NULL,
+	PRIMARY KEY (id)
+);
+
+`
+
+// DROP TABLE IF EXISTS server;
+// CREATE TABLE IF NOT EXISTS server (
+// 	Id                 string `json:"id",db:"id"`
+// 	Username           string `json:"username",db:"user_name"`
+// 	Role               string `json:"role",db:"role"`
+// 	Status             string `json:"status",db:"status"`
+// 	Created            uint64 `json:"created",db:"created"`
+// 	Last_modified      uint64 `json:"last_modified",db:"last_modified"`
+// 	Password           string `json:"password",db:"password"`
+// 	Temp_token         string `json:"temp_token",db:"temp_token"`
+// 	Temp_token_expires uint64 `json:"temp_token_expires",db:"temp_token_expires"`
+// 	Last_login         uint64 `json:"last_login",db:"last_login"`
+
+// 	Description         string `json:"description",db:"description"`
+// 	Address             string `json:"address",db:"address"`
+// 	Max_conections      int    `json:"max_connections",db:"max_connections"`
+// 	Current_connections int    `json:"current_connections",db:"current_connections"`
+// 	Require_password    bool   `json:"require_password",db:"require_password"`
+// 	Last_heartbeat      uint64 `json:"last_heartbeat",db:"last_heartbeat"`
+// 	Healthy             bool   `json:"healthy",db:"healthy"`
+// }
+
+// DROP TABLE IF EXISTS workflow_definitions;
+// CREATE TABLE workflow_definitions (
+// 	id VARCHAR NOT NULL,
+// 	created TIMESTAMP NOT NULL,
+// 	last_modified TIMESTAMP NOT NULL,
+// 	version INTEGER NOT NULL,
+// 	yaml VARCHAR NOT NULL,
+// 	is_deleted BOOLEAN NOT NULL,
+// 	is_enabled BOOLEAN NOT NULL,
+// 	deleted_date TIMESTAMP,
+// 	PRIMARY KEY (id)
+// );
+
+// DROP TABLE IF EXISTS workflow_history;
+// CREATE TABLE workflow_history (
+// 	id VARCHAR NOT NULL,
+// 	version INTEGER NOT NULL,
+// 	created TIMESTAMP NOT NULL,
+// 	reason VARCHAR NOT NULL,
+// 	yaml VARCHAR NOT NULL,
+// 	PRIMARY KEY (id, version)
+// );
+
+// DROP TABLE IF EXISTS workflow_instances;
+// CREATE TABLE workflow_instances (
+// 	id VARCHAR NOT NULL,
+// 	created TIMESTAMP NOT NULL,
+// 	last_modified TIMESTAMP NOT NULL,
+// 	finished TIMESTAMP,
+// 	is_active BOOLEAN NOT NULL,
+// 	outcome VARCHAR NOT NULL,
+// 	state VARCHAR NOT NULL,
+// 	yaml VARCHAR NOT NULL,
+// 	workflow_id VARCHAR,
+// 	shared_state_network_id VARCHAR,
+// 	shared_state_volume_id VARCHAR,
+// 	shared_state_container_id VARCHAR,
+// 	PRIMARY KEY (id),
+// 	FOREIGN KEY(workflow_id) REFERENCES workflow_definitions (id)
+// );
+
+// `
+
+type Config_DB struct {
 	Key   string
 	Value string
 }
 
-func NewConfig() *Config {
-	c := Config{}
+func NewConfig() *Config_DB {
+	c := Config_DB{}
 	return &c
 }
 
@@ -92,13 +183,15 @@ func NewConfig() *Config {
 
 // KPDB helper struct holds the data and keys
 type DB struct {
-	db *sql.DB
+	db     *sqlx.DB
+	dbName string
 }
 
 // NewKPDB constructor
-func NewDB(filename string) *DB {
+func NewDB(username string, password string, dbname string, dbhost string, dbport int) *DB {
 	tdb := DB{}
-	tdb.Load(goutils.TokenswitchEnvironmentVariables(filename))
+	tdb.dbName = dbname
+	tdb.Connect(username, password, dbname, dbhost, dbport)
 	return &tdb
 }
 
@@ -130,54 +223,71 @@ func NewDB(filename string) *DB {
 // }
 
 // Load populates the db with the file
-func (tdb *DB) LoadUnencrypted(filename string) bool {
-	db, err := sql.Open("sqlite3", filename)
-	utils.CheckErr(err)
-	tdb.db = db
-	return true
-}
-
-// Load populates the db with the file
-func (tdb *DB) LoadEncrypted(filename string) bool {
-
-	key := "2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99"
-	dbname := fmt.Sprintf("db?_pragma_key=x'%s'&_pragma_cipher_page_size=4096", key)
-	db, err := sql.Open("sqlite3", dbname)
-
-	// db, err := sql.Open("sqlite3", filename)
-	utils.CheckErr(err)
-	tdb.db = db
-	return true
-}
-
-func (tdb *DB) Init() bool {
-	db := tdb.db
-	sqls := strings.Split(SQL_SCHEMA, ";")
-	for _, value := range sqls {
-		// value = strings.ReplaceAll(value, "\n", " ")
-		if strings.Trim(value, " \n") == "" {
-			continue
+func (tdb *DB) Connect(username string, password string, dbname string, host string, port int) bool {
+	var conn string
+	if password == "" {
+		conn = fmt.Sprintf("user=%v dbname=%v sslmode=disable host=%v port=%v", username, dbname, host, port)
+	} else {
+		conn = fmt.Sprintf("user=%v dbname=%v sslmode=disable host=%v port=%v password=%v", username, dbname, host, port, password)
+	}
+	fmt.Printf("conn=%v\n", conn)
+	db, err := sqlx.Connect("postgres", conn)
+	if err != nil {
+		error := err.Error()
+		if strings.Contains(error, "does not exist") {
+			tdb.CreateDatabase(username, password, dbname, host, port)
 		}
-		value = strings.Trim(value, " ") + ";"
-		value = strings.ReplaceAll(value, "\n", "")
-		if value != "" && strings.Index(value, "--") != 0 {
-			// fmt.Printf("Not a comment, -- index = %v\n", strings.Index(value, "--"))
-			// fmt.Printf("\n%v\n", value)
-			stmt, err := db.Prepare(value)
-			_, err = stmt.Exec()
-			utils.CheckErr(err)
-		}
+		db, err = sqlx.Connect("postgres", conn)
+		utils.CheckErr(err)
 	}
 
+	err = db.Ping()
+	utils.CheckErr(err)
+
+	tdb.db = db
+	return true
+}
+
+func (tdb *DB) CreateDatabase(username string, password string, dbname string, host string, port int) bool {
+	conn := ""
+	if password == "" {
+		conn = fmt.Sprintf("user=%v dbname=postgres sslmode=disable host=%v port=%v", username, host, port)
+	} else {
+		conn = fmt.Sprintf("user=%v dbname=postgres sslmode=disable host=%v port=%v password=%v", username, host, port, password)
+	}
+	db, err := sqlx.Connect("postgres", conn)
+	utils.CheckErr(err)
+	db.MustExec("create database " + dbname)
+	return true
+}
+
+func (tdb *DB) DoesSchemaExist() bool {
+	db := tdb.db
+	dbName := tdb.dbName
+	sql := fmt.Sprintf("SELECT count(1) FROM information_schema.tables where table_catalog = '%v' and table_schema = 'public';", dbName)
+	rows, err := db.Query(sql)
+	utils.CheckErr(err)
+	var results int
+	for rows.Next() {
+		err = rows.Scan(&results)
+		utils.CheckErr(err)
+	}
+	rows.Close()
+	return results > 0
+}
+
+func (tdb *DB) CreateSchemaAndPopulate() bool {
+	db := tdb.db
+	db.MustExec(SQL_SCHEMA)
 	tdb.AddConfig("created", time.Now().Format(time.RFC3339Nano))
 	return true
 }
 
 func (tdb *DB) AddConfig(key string, value string) {
 	db := tdb.db
-	sql := fmt.Sprintf("insert into config (key, value) values (\"%v\", \"%v\");", key, value)
-	_, err := db.Exec(sql)
-	utils.CheckErr(err)
+	tx := db.MustBegin()
+	tx.MustExec("insert into config (key, value) values ($1, $2)", key, value)
+	tx.Commit()
 }
 
 func (tdb *DB) RemoveConfig(key string) (bool, error) {
@@ -188,42 +298,38 @@ func (tdb *DB) RemoveConfig(key string) (bool, error) {
 	return true, err
 }
 
-func (tdb *DB) ListConfig() []*Config {
+func (tdb *DB) ListConfig() []*Config_DB {
 	db := tdb.db
-	rows, err := db.Query("SELECT key, value FROM config")
-	utils.CheckErr(err)
-	var key string
-	var value string
-
-	var results []*Config
-	for rows.Next() {
-		err = rows.Scan(&key, &value)
-		utils.CheckErr(err)
-		t := NewConfig()
-		t.Key = key
-		t.Value = value
-		results = append(results, t)
-	}
-
-	rows.Close() //good habit to close
-	return results
-
+	config := []*Config_DB{}
+	db.Select(&config, "SELECT * FROM config")
+	return config
 }
 
-func (tdb *DB) GetConfig(key string) (*Config, error) {
+func (tdb *DB) GetConfig(key string) (*Config_DB, error) {
 	db := tdb.db
-	query := fmt.Sprintf("SELECT key, value FROM config where key='%v'", key)
-	rows, err := db.Query(query)
+	config := &Config_DB{}
+	err := db.Get(&config, "SELECT * FROM config WHERE key=$1", key)
 	utils.CheckErr(err)
-	var value string
+	return config, nil
+}
+
+func (tdb *DB) GetUserById(user_id string) (*User, error) {
+	db := tdb.db
+	user := &User{}
+	rows, err := db.Queryx("SELECT * FROM users where user_id='%v'", user_id)
+	// rows, err := db.Query(query)
+	utils.CheckErr(err)
+	// var value string
 	rows.Next()
-	err = rows.Scan(&key, &value)
+	err = rows.StructScan(&user)
 	utils.CheckErr(err)
-	t := NewConfig()
-	t.Key = key
-	t.Value = value
+	// err = rows.Scan(&key, &value)
+	// utils.CheckErr(err)
+	// t := NewConfig()
+	// t.Key = key
+	// t.Value = value
 	rows.Close() //good habit to close
-	return t, nil
+	return user, nil
 
 }
 

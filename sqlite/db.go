@@ -8,9 +8,60 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/simonski/golearn/learn/utils"
 	goutils "github.com/simonski/goutils"
 )
+
+const SQL_SCHEMAX = `    
+
+DROP TABLE IF EXISTS config;
+CREATE TABLE IF NOT EXISTS config (
+	key VARCHAR NOT NULL, 
+	value VARCHAR NOT NULL, 
+	PRIMARY KEY (key)
+);
+
+CREATE TABLE workflow_definitions (
+	id VARCHAR NOT NULL, 
+	created DATETIME NOT NULL, 
+	last_modified DATETIME NOT NULL, 
+	version INTEGER NOT NULL, 
+	yaml VARCHAR NOT NULL, 
+	is_deleted BOOLEAN NOT NULL, 
+	is_enabled BOOLEAN NOT NULL, 
+	deleted_date DATETIME, 
+	PRIMARY KEY (id), 
+	CHECK (is_deleted IN (0, 1)), 
+	CHECK (is_enabled IN (0, 1))
+);
+
+CREATE TABLE workflow_history (
+	id VARCHAR NOT NULL, 
+	version INTEGER NOT NULL, 
+	created DATETIME NOT NULL, 
+	reason VARCHAR NOT NULL, 
+	yaml VARCHAR NOT NULL, 
+	PRIMARY KEY (id, version)
+);
+
+CREATE TABLE workflow_instances (
+	id VARCHAR NOT NULL, 
+	created DATETIME NOT NULL, 
+	last_modified DATETIME NOT NULL, 
+	finished DATETIME, 
+	is_active BOOLEAN NOT NULL, 
+	outcome VARCHAR NOT NULL, 
+	state VARCHAR NOT NULL, 
+	yaml VARCHAR NOT NULL, 
+	workflow_id VARCHAR, 
+	shared_state_network_id VARCHAR, 
+	shared_state_volume_id VARCHAR, 
+	shared_state_container_id VARCHAR, 
+	PRIMARY KEY (id), 
+	CHECK (is_active IN (0, 1)), 
+	FOREIGN KEY(workflow_id) REFERENCES workflow_definitions (id)
+);
+
+`
 
 type Config struct {
 	Key   string
@@ -130,29 +181,16 @@ func NewDB(filename string) *DB {
 // }
 
 // Load populates the db with the file
-func (tdb *DB) LoadUnencrypted(filename string) bool {
+func (tdb *DB) Load(filename string) bool {
 	db, err := sql.Open("sqlite3", filename)
-	utils.CheckErr(err)
-	tdb.db = db
-	return true
-}
-
-// Load populates the db with the file
-func (tdb *DB) LoadEncrypted(filename string) bool {
-
-	key := "2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99"
-	dbname := fmt.Sprintf("db?_pragma_key=x'%s'&_pragma_cipher_page_size=4096", key)
-	db, err := sql.Open("sqlite3", dbname)
-
-	// db, err := sql.Open("sqlite3", filename)
-	utils.CheckErr(err)
+	goutils.CheckErr(err)
 	tdb.db = db
 	return true
 }
 
 func (tdb *DB) Init() bool {
 	db := tdb.db
-	sqls := strings.Split(SQL_SCHEMA, ";")
+	sqls := strings.Split(SQL_SCHEMAX, ";")
 	for _, value := range sqls {
 		// value = strings.ReplaceAll(value, "\n", " ")
 		if strings.Trim(value, " \n") == "" {
@@ -165,7 +203,7 @@ func (tdb *DB) Init() bool {
 			// fmt.Printf("\n%v\n", value)
 			stmt, err := db.Prepare(value)
 			_, err = stmt.Exec()
-			utils.CheckErr(err)
+			goutils.CheckErr(err)
 		}
 	}
 
@@ -177,28 +215,28 @@ func (tdb *DB) AddConfig(key string, value string) {
 	db := tdb.db
 	sql := fmt.Sprintf("insert into config (key, value) values (\"%v\", \"%v\");", key, value)
 	_, err := db.Exec(sql)
-	utils.CheckErr(err)
+	goutils.CheckErr(err)
 }
 
 func (tdb *DB) RemoveConfig(key string) (bool, error) {
 	db := tdb.db
 	sql := fmt.Sprintf("delete from config where key='%v';", key)
 	_, err := db.Exec(sql)
-	utils.CheckErr(err)
+	goutils.CheckErr(err)
 	return true, err
 }
 
 func (tdb *DB) ListConfig() []*Config {
 	db := tdb.db
 	rows, err := db.Query("SELECT key, value FROM config")
-	utils.CheckErr(err)
+	goutils.CheckErr(err)
 	var key string
 	var value string
 
 	var results []*Config
 	for rows.Next() {
 		err = rows.Scan(&key, &value)
-		utils.CheckErr(err)
+		goutils.CheckErr(err)
 		t := NewConfig()
 		t.Key = key
 		t.Value = value
@@ -214,11 +252,11 @@ func (tdb *DB) GetConfig(key string) (*Config, error) {
 	db := tdb.db
 	query := fmt.Sprintf("SELECT key, value FROM config where key='%v'", key)
 	rows, err := db.Query(query)
-	utils.CheckErr(err)
+	goutils.CheckErr(err)
 	var value string
 	rows.Next()
 	err = rows.Scan(&key, &value)
-	utils.CheckErr(err)
+	goutils.CheckErr(err)
 	t := NewConfig()
 	t.Key = key
 	t.Value = value

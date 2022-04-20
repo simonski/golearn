@@ -1,4 +1,4 @@
-package http
+package registry
 
 /*
 all HTTPS
@@ -83,6 +83,6 @@ type App struct {
 }
 
 func (a *App) HandleInput(command string, cli *goutils.CLI) {
-	server := NewHttpServer(cli)
+	server := NewHttpRegistryServer(cli)
 	server.Run()
 }

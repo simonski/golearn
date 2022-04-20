@@ -6,6 +6,7 @@ import (
 
 	"github.com/simonski/golearn/learn/grpc"
 	"github.com/simonski/golearn/learn/http"
+	"github.com/simonski/golearn/learn/registry"
 	"github.com/simonski/golearn/learn/sqlite"
 	"github.com/simonski/goutils"
 )
@@ -21,6 +22,9 @@ func main() {
 		app.HandleInput(command, cli)
 	} else if command == "http" {
 		app := http.NewApp()
+		app.HandleInput(command, cli)
+	} else if command == "registry" {
+		app := registry.NewApp()
 		app.HandleInput(command, cli)
 	} else {
 		fmt.Println("Error, usage: ./learn <COMMAND> (where command is db, grpc, http)")

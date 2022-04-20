@@ -1,24 +1,77 @@
-package sqlite
+package http
 
 import (
 	"fmt"
 
-	"database/sql"
 	"strings"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/simonski/golearn/learn/utils"
+
 	goutils "github.com/simonski/goutils"
 )
 
-type Config struct {
+const SQL_SCHEMA = `    
+
+DROP TABLE IF EXISTS config;
+CREATE TABLE IF NOT EXISTS config (
+	key VARCHAR NOT NULL, 
+	value VARCHAR NOT NULL, 
+	PRIMARY KEY (key)
+);
+
+CREATE TABLE workflow_definitions (
+	id VARCHAR NOT NULL, 
+	created DATETIME NOT NULL, 
+	last_modified DATETIME NOT NULL, 
+	version INTEGER NOT NULL, 
+	yaml VARCHAR NOT NULL, 
+	is_deleted BOOLEAN NOT NULL, 
+	is_enabled BOOLEAN NOT NULL, 
+	deleted_date DATETIME, 
+	PRIMARY KEY (id), 
+	CHECK (is_deleted IN (0, 1)), 
+	CHECK (is_enabled IN (0, 1))
+);
+
+CREATE TABLE workflow_history (
+	id VARCHAR NOT NULL, 
+	version INTEGER NOT NULL, 
+	created DATETIME NOT NULL, 
+	reason VARCHAR NOT NULL, 
+	yaml VARCHAR NOT NULL, 
+	PRIMARY KEY (id, version)
+);
+
+CREATE TABLE workflow_instances (
+	id VARCHAR NOT NULL, 
+	created DATETIME NOT NULL, 
+	last_modified DATETIME NOT NULL, 
+	finished DATETIME, 
+	is_active BOOLEAN NOT NULL, 
+	outcome VARCHAR NOT NULL, 
+	state VARCHAR NOT NULL, 
+	yaml VARCHAR NOT NULL, 
+	workflow_id VARCHAR, 
+	shared_state_network_id VARCHAR, 
+	shared_state_volume_id VARCHAR, 
+	shared_state_container_id VARCHAR, 
+	PRIMARY KEY (id), 
+	CHECK (is_active IN (0, 1)), 
+	FOREIGN KEY(workflow_id) REFERENCES workflow_definitions (id)
+);
+
+`
+
+type Config_DB struct {
 	Key   string
 	Value string
 }
 
-func NewConfig() *Config {
-	c := Config{}
+func NewConfig() *Config_DB {
+	c := Config_DB{}
 	return &c
 }
 
@@ -92,7 +145,7 @@ func NewConfig() *Config {
 
 // KPDB helper struct holds the data and keys
 type DB struct {
-	db *sql.DB
+	db *sqlx.DB
 }
 
 // NewKPDB constructor
@@ -130,21 +183,8 @@ func NewDB(filename string) *DB {
 // }
 
 // Load populates the db with the file
-func (tdb *DB) LoadUnencrypted(filename string) bool {
-	db, err := sql.Open("sqlite3", filename)
-	utils.CheckErr(err)
-	tdb.db = db
-	return true
-}
-
-// Load populates the db with the file
-func (tdb *DB) LoadEncrypted(filename string) bool {
-
-	key := "2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99"
-	dbname := fmt.Sprintf("db?_pragma_key=x'%s'&_pragma_cipher_page_size=4096", key)
-	db, err := sql.Open("sqlite3", dbname)
-
-	// db, err := sql.Open("sqlite3", filename)
+func (tdb *DB) Load(filename string) bool {
+	db, err := sqlx.Open("sqlite3", filename)
 	utils.CheckErr(err)
 	tdb.db = db
 	return true
@@ -152,6 +192,7 @@ func (tdb *DB) LoadEncrypted(filename string) bool {
 
 func (tdb *DB) Init() bool {
 	db := tdb.db
+
 	sqls := strings.Split(SQL_SCHEMA, ";")
 	for _, value := range sqls {
 		// value = strings.ReplaceAll(value, "\n", " ")
@@ -188,14 +229,14 @@ func (tdb *DB) RemoveConfig(key string) (bool, error) {
 	return true, err
 }
 
-func (tdb *DB) ListConfig() []*Config {
+func (tdb *DB) ListConfig() []*Config_DB {
 	db := tdb.db
 	rows, err := db.Query("SELECT key, value FROM config")
 	utils.CheckErr(err)
 	var key string
 	var value string
 
-	var results []*Config
+	var results []*Config_DB
 	for rows.Next() {
 		err = rows.Scan(&key, &value)
 		utils.CheckErr(err)
@@ -210,7 +251,7 @@ func (tdb *DB) ListConfig() []*Config {
 
 }
 
-func (tdb *DB) GetConfig(key string) (*Config, error) {
+func (tdb *DB) GetConfig(key string) (*Config_DB, error) {
 	db := tdb.db
 	query := fmt.Sprintf("SELECT key, value FROM config where key='%v'", key)
 	rows, err := db.Query(query)
@@ -224,8 +265,27 @@ func (tdb *DB) GetConfig(key string) (*Config, error) {
 	t.Value = value
 	rows.Close() //good habit to close
 	return t, nil
-
 }
+
+// func (tdb *DB) GetUserById(user_id string) (*User, error) {
+// 	db := tdb.db
+// 	user := &User{}
+// 	rows, err := db.Queryx("SELECT * FROM users where user_id='%v'", user_id)
+// 	// rows, err := db.Query(query)
+// 	utils.CheckErr(err)
+// 	// var value string
+// 	rows.Next()
+// 	err = rows.StructScan(&user)
+// 	utils.CheckErr(err)
+// 	// err = rows.Scan(&key, &value)
+// 	// utils.CheckErr(err)
+// 	// t := NewConfig()
+// 	// t.Key = key
+// 	// t.Value = value
+// 	rows.Close() //good habit to close
+// 	return user, nil
+
+// }
 
 // func DoSql(cli *goutils.CLI) {
 // 	db, err := sql.Open("sqlite3", "./foo.db")
